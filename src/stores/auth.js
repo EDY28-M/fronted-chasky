@@ -18,7 +18,12 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.setItem('user', JSON.stringify(user.value))
   }
 
-  function logout() {
+  async function logout() {
+    try {
+      await authApi.logout()
+    } catch (_) {
+      // ignore (token may already be invalid)
+    }
     token.value = null
     user.value = null
     localStorage.removeItem('token')
