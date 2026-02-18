@@ -27,70 +27,32 @@
         <template #actions="{ item }">
           <div class="flex gap-2">
             <button type="button" class="text-primary hover:text-primary-dark text-sm font-medium" @click="openEdit(item)">Ver</button>
-            <button v-if="item.estado !== 'COMPLETADO'" type="button" class="text-green-600 hover:text-green-700 text-sm font-medium" @click="confirmPayment(item)">Confirmar</button>
           </div>
         </template>
       </DataTable>
     </div>
 
-    <Modal v-model="createModalOpen" title="Registrar pago">
-      <div class="space-y-4">
-        <div class="space-y-2">
-          <label class="text-sm font-medium text-gray-700">Tipo *</label>
-          <select v-model="formData.tipo" required class="w-full px-3 py-2 border border-gray-300 rounded-sm focus:ring-2 focus:ring-primary">
-            <option value="FACTURA">Factura</option>
-            <option value="MENSUALIDAD">Mensualidad</option>
-            <option value="MATRICULA">Matrícula</option>
-            <option value="EXAMEN">Examen</option>
-            <option value="TIENDA">Tienda</option>
-          </select>
-        </div>
-        <div class="space-y-2">
-          <label class="text-sm font-medium text-gray-700">Alumno *</label>
-          <select v-model="formData.alumno_id" required class="w-full px-3 py-2 border border-gray-300 rounded-sm focus:ring-2 focus:ring-primary">
-            <option value="">Seleccione</option>
-            <option v-for="s in students" :key="s.id" :value="s.id">{{ s.nombre }} {{ s.apellidos }}</option>
-          </select>
-        </div>
-        <div class="grid grid-cols-2 gap-4">
-          <div class="space-y-2">
-            <label class="text-sm font-medium text-gray-700">Monto esperado (PEN) *</label>
-            <input v-model.number="formData.monto_esperado" type="number" min="0" step="0.01" required class="w-full px-3 py-2 border border-gray-300 rounded-sm focus:ring-2 focus:ring-primary" />
-          </div>
-          <div class="space-y-2">
-            <label class="text-sm font-medium text-gray-700">Monto pagado (PEN) *</label>
-            <input v-model.number="formData.monto_pagado" type="number" min="0" step="0.01" required class="w-full px-3 py-2 border border-gray-300 rounded-sm focus:ring-2 focus:ring-primary" />
-          </div>
-        </div>
-        <div class="space-y-2">
-          <label class="text-sm font-medium text-gray-700">Método de pago *</label>
-          <select v-model="formData.metodo_pago" required class="w-full px-3 py-2 border border-gray-300 rounded-sm focus:ring-2 focus:ring-primary">
-            <option value="EFECTIVO">Efectivo</option>
-            <option value="TARJETA_DEBITO">Tarjeta débito</option>
-            <option value="TARJETA_CREDITO">Tarjeta crédito</option>
-            <option value="TRANSFERENCIA">Transferencia</option>
-            <option value="YAPE">Yape</option>
-            <option value="PLIN">Plin</option>
-          </select>
-        </div>
-      </div>
-      <template #footer>
-        <div class="flex justify-end gap-2">
-          <button type="button" class="px-4 py-2 border border-gray-300 rounded-sm text-gray-700 hover:bg-gray-50" @click="createModalOpen = false">Cancelar</button>
-          <button type="button" class="px-4 py-2 bg-primary text-white rounded-sm hover:bg-primary-dark disabled:opacity-50" :disabled="loadingForm" @click="submitCreate()">Registrar</button>
-        </div>
-      </template>
-    </Modal>
+    <PaymentModal
+      v-model="createModalOpen"
+      :initial-data="modalData"
+      @success="handleSuccess"
+    />
+
+    <PaymentDetailModal
+      v-model="detailModalOpen"
+      :payment="selectedPayment"
+    />
   </PageLayout>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import PageLayout from '@/components/common/PageLayout.vue'
 import DataTable from '@/components/common/DataTable.vue'
-import Modal from '@/components/common/Modal.vue'
+import PaymentModal from '@/components/financial/PaymentModal.vue'
+import PaymentDetailModal from '@/components/financial/PaymentDetailModal.vue'
 import { financialApi } from '@/services/api/financial'
-import { membersApi } from '@/services/api/members'
 
 const columns = [
   { key: 'codigo', label: 'Código' },
@@ -104,23 +66,13 @@ const meta = ref(null)
 const loading = ref(false)
 const error = ref('')
 const createModalOpen = ref(false)
-const loadingForm = ref(false)
-const students = ref([])
+const modalData = ref({})
 
-const formData = reactive({
-  tipo: 'MENSUALIDAD',
-  alumno_id: '',
-  monto_esperado: 0,
-  monto_pagado: 0,
-  metodo_pago: 'EFECTIVO',
-})
+const detailModalOpen = ref(false)
+const selectedPayment = ref(null)
 
-async function loadStudents() {
-  try {
-    const res = await membersApi.getStudents({ per_page: 200 })
-    students.value = res.data ?? []
-  } catch (_) {}
-}
+const route = useRoute()
+const router = useRouter()
 
 async function fetch(params = {}, page = 1) {
   loading.value = true
@@ -136,42 +88,46 @@ async function fetch(params = {}, page = 1) {
   }
 }
 
-function openCreate() {
-  formData.tipo = 'MENSUALIDAD'
-  formData.alumno_id = ''
-  formData.monto_esperado = 0
-  formData.monto_pagado = 0
-  formData.metodo_pago = 'EFECTIVO'
+function openCreate(data = {}) {
+  modalData.value = {
+    tipo: 'MENSUALIDAD',
+    metodo_pago: 'EFECTIVO',
+    ...data
+  }
   createModalOpen.value = true
 }
 
 function openEdit(item) {
-  console.log('Ver pago', item)
+  selectedPayment.value = item
+  detailModalOpen.value = true
 }
 
-async function confirmPayment(item) {
-  error.value = ''
-  try {
-    await financialApi.confirmPayment(item.id)
-    await fetch()
-  } catch (e) {
-    error.value = e.response?.data?.message ?? 'Error al confirmar.'
+async function handleSuccess() {
+  await fetch()
+  // If there were query params, maybe clear them?
+  if (Object.keys(route.query).length > 0) {
+    router.replace({ query: {} })
   }
 }
 
-async function submitCreate() {
-  loadingForm.value = true
-  error.value = ''
-  try {
-    await financialApi.createPayment(formData)
-    createModalOpen.value = false
-    await fetch()
-  } catch (e) {
-    error.value = e.response?.data?.message ?? 'Error al registrar pago.'
-  } finally {
-    loadingForm.value = false
-  }
-}
+onMounted(async () => {
+  await fetch()
 
-onMounted(() => { loadStudents(); fetch() })
+  // Keep this logic for backward compatibility or if accessed via URL manually
+  if (route.query.deuda_id && route.query.alumno_id) {
+    const data = {
+      alumno_id: route.query.alumno_id,
+      referencia_id: route.query.deuda_id,
+      tipo: 'MENSUALIDAD',
+    }
+    
+    if (route.query.monto_pendiente) {
+      const amount = parseFloat(route.query.monto_pendiente)
+      data.monto_esperado = amount
+      data.monto_pagado = amount
+    }
+    
+    openCreate(data)
+  }
+})
 </script>

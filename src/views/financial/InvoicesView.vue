@@ -26,7 +26,9 @@
         </template>
         <template #actions="{ item }">
           <div class="flex gap-2">
-            <button type="button" class="text-primary hover:text-primary-dark text-sm font-medium" @click="openEdit(item)">Ver</button>
+      <button @click="openPrint(item)" class="text-gray-600 hover:text-gray-900 text-sm font-medium">
+              <span class="material-symbols-outlined text-lg align-middle">print</span>
+            </button>
             <button v-if="item.estado !== 'ANULADA'" type="button" class="text-amber-600 hover:text-amber-700 text-sm font-medium" @click="confirmVoid(item)">Anular</button>
           </div>
         </template>
@@ -44,12 +46,12 @@
           </select>
         </div>
         <div class="space-y-2">
-          <label class="text-sm font-medium text-gray-700">Cliente / Razón social *</label>
-          <input v-model="formData.cliente_nombre" type="text" required class="w-full px-3 py-2 border border-gray-300 rounded-sm focus:ring-2 focus:ring-primary" />
-        </div>
-        <div class="space-y-2">
           <label class="text-sm font-medium text-gray-700">Documento cliente</label>
           <input v-model="formData.cliente_documento" type="text" class="w-full px-3 py-2 border border-gray-300 rounded-sm focus:ring-2 focus:ring-primary" />
+        </div>
+        <div class="space-y-2">
+          <label class="text-sm font-medium text-gray-700">Cliente / Razón social *</label>
+          <input v-model="formData.cliente_nombre" type="text" required class="w-full px-3 py-2 border border-gray-300 rounded-sm focus:ring-2 focus:ring-primary" />
         </div>
         <div class="space-y-2">
           <label class="text-sm font-medium text-gray-700">Sucursal *</label>
@@ -81,15 +83,24 @@
         </div>
       </template>
     </Modal>
+
+    <InvoicePrint
+      v-if="selectedInvoice"
+      :visible="showPrint"
+      :invoice="selectedInvoice"
+      @close="showPrint = false"
+    />
   </PageLayout>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, watch } from 'vue'
 import PageLayout from '@/components/common/PageLayout.vue'
 import DataTable from '@/components/common/DataTable.vue'
 import Modal from '@/components/common/Modal.vue'
+import InvoicePrint from '@/components/financial/InvoicePrint.vue'
 import { financialApi } from '@/services/api/financial'
+import { membersApi } from '@/services/api/members'
 
 const columns = [
   { key: 'numero', label: 'Número' },
@@ -105,15 +116,43 @@ const error = ref('')
 const createModalOpen = ref(false)
 const loadingForm = ref(false)
 const branches = ref([])
+const loadingSearch = ref(false)
+const showPrint = ref(false)
+const selectedInvoice = ref(null)
 
 const formData = reactive({
   tipo: 'BOLETA',
   cliente_nombre: '',
   cliente_documento: '',
+  alumno_id: null,
   sucursal_id: '',
   subtotal: 0,
   total: 0,
   itemsJson: '[{"descripcion":"Mensualidad","cantidad":1,"precio_unitario":0,"subtotal":0}]',
+})
+
+// Watch for DNI input to auto-fill student name
+watch(() => formData.cliente_documento, async (val) => {
+  if (!val || val.length < 8) return
+
+  // Basic debounce or check
+  loadingSearch.value = true
+  try {
+    const res = await membersApi.getStudents({ search: val, per_page: 5 })
+    const students = res.data ?? []
+    
+    // Find exact match or first result
+    const match = students.find(s => s.documento_identidad === val) || students[0]
+    
+    if (match) {
+      formData.cliente_nombre = `${match.nombre} ${match.apellidos}`.trim()
+      formData.alumno_id = match.id
+    }
+  } catch (e) {
+    console.error('Error buscando alumno', e)
+  } finally {
+    loadingSearch.value = false
+  }
 })
 
 async function loadBranches() {
@@ -141,6 +180,7 @@ function openCreate() {
   formData.tipo = 'BOLETA'
   formData.cliente_nombre = ''
   formData.cliente_documento = ''
+  formData.alumno_id = null
   formData.sucursal_id = ''
   formData.subtotal = 0
   formData.total = 0
@@ -149,7 +189,13 @@ function openCreate() {
 }
 
 function openEdit(item) {
-  console.log('Ver factura', item)
+  selectedInvoice.value = item
+  showPrint.value = true
+}
+
+function openPrint(item) {
+  selectedInvoice.value = item
+  showPrint.value = true
 }
 
 async function confirmVoid(item) {
@@ -180,17 +226,28 @@ async function submitCreate() {
       loadingForm.value = false
       return
     }
-    await financialApi.createInvoice({
+    const res = await financialApi.createInvoice({
       tipo: formData.tipo,
       cliente_nombre: formData.cliente_nombre,
       cliente_documento: formData.cliente_documento || null,
+      alumno_id: formData.alumno_id,
       sucursal_id: formData.sucursal_id,
       subtotal: formData.subtotal,
       total: formData.total,
       items,
     })
+    
     createModalOpen.value = false
     await fetch()
+    
+    // Automatically open print view for the new invoice
+    if (res && res.id) {
+       // Ideally we need the full object, but maybe res is the object?
+       // financialApi usually returns `unwrap(res)` which is `res.data`?
+       // If so, `res` is the invoice object.
+       openPrint(res)
+    }
+
   } catch (e) {
     error.value = e.response?.data?.message ?? 'Error al emitir factura.'
   } finally {
